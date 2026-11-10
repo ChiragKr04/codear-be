@@ -70,3 +70,7 @@ mod read_file_tests;
 #[cfg(test)]
 #[path = "tests/search_tests.rs"]
 mod search_tests;
+
+#[cfg(test)]
+#[path = "tests/write_file_tests.rs"]
+mod write_file_tests;
