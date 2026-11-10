@@ -62,3 +62,7 @@ fn parse<'a, T: Deserialize<'a>>(args: &'a str) -> Result<T, ToolError> {
 #[cfg(test)]
 #[path = "tests/list_dir_tests.rs"]
 mod list_dir_tests;
+
+#[cfg(test)]
+#[path = "tests/read_file_tests.rs"]
+mod read_file_tests;
