@@ -66,3 +66,7 @@ mod list_dir_tests;
 #[cfg(test)]
 #[path = "tests/read_file_tests.rs"]
 mod read_file_tests;
+
+#[cfg(test)]
+#[path = "tests/search_tests.rs"]
+mod search_tests;
