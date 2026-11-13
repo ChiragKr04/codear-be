@@ -8,6 +8,7 @@
 
 mod error;
 
+pub mod approval;
 pub mod edit_file;
 pub mod list_dir;
 pub mod read_file;
@@ -16,6 +17,7 @@ pub mod sandbox;
 pub mod search;
 pub mod write_file;
 
+pub use approval::{Approver, TerminalApprover};
 pub use edit_file::edit_file;
 pub use error::{ToolError, ToolResult};
 pub use list_dir::list_dir;
@@ -45,15 +47,16 @@ pub fn sample_args(name: &str) -> Option<&'static str> {
 }
 
 /// Runs the tool called `name` with its JSON-encoded `args` (as sent by the model).
-/// Every path the model gives is resolved inside `sb`.
-pub fn dispatch(sb: &Sandbox, name: &str, args: &str) -> ToolResult {
+/// Every path the model gives is resolved inside `sb`; shell commands run only
+/// once `approver` agrees.
+pub fn dispatch(sb: &Sandbox, approver: &dyn Approver, name: &str, args: &str) -> ToolResult {
     match name {
         "list_dir" => list_dir(sb, parse(args)?),
         "read_file" => read_file(sb, parse(args)?),
         "search" => search(sb, parse(args)?),
         "write_file" => write_file(sb, parse(args)?),
         "edit_file" => edit_file(sb, parse(args)?),
-        "run_command" => run_command(sb, parse(args)?),
+        "run_command" => run_command(sb, approver, parse(args)?),
         other => Err(ToolError::UnknownTool(other.to_string())),
     }
 }
@@ -61,6 +64,10 @@ pub fn dispatch(sb: &Sandbox, name: &str, args: &str) -> ToolResult {
 fn parse<'a, T: Deserialize<'a>>(args: &'a str) -> Result<T, ToolError> {
     serde_json::from_str(args).map_err(|e| ToolError::InvalidArgs(e.to_string()))
 }
+
+#[cfg(test)]
+#[path = "tests/approval_tests.rs"]
+mod approval_tests;
 
 #[cfg(test)]
 #[path = "tests/sandbox_tests.rs"]

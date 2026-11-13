@@ -8,8 +8,12 @@ fn sb() -> Sandbox {
     Sandbox::new(&std::env::current_dir().unwrap()).unwrap()
 }
 
+fn yes(_: &str) -> Result<(), String> {
+    Ok(())
+}
+
 fn run(command: &str) -> ToolResult {
-    run_command(&sb(), RunCommandArgs { command: command.into(), timeout_secs: None })
+    run_command(&sb(), &yes, RunCommandArgs { command: command.into(), timeout_secs: None })
 }
 
 #[test]
@@ -42,7 +46,7 @@ fn run_command_runs_in_sandbox_root() {
     let dir = std::env::temp_dir().join(format!("codear-run-root-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let sb = Sandbox::new(&dir).unwrap();
-    let out = run_command(&sb, RunCommandArgs { command: "pwd -P".into(), timeout_secs: None })
+    let out = run_command(&sb, &yes, RunCommandArgs { command: "pwd -P".into(), timeout_secs: None })
         .unwrap();
     assert!(out.contains(&format!("stdout:\n{}\n", sb.root().display())), "{out}");
     let _ = std::fs::remove_dir_all(&dir);
@@ -66,7 +70,7 @@ fn run_command_keeps_last_bytes_of_long_output() {
 #[test]
 fn run_command_times_out_and_kills() {
     let start = Instant::now();
-    let out = run_command(&sb(), RunCommandArgs {
+    let out = run_command(&sb(), &yes, RunCommandArgs {
         command: "echo started; sleep 30".into(),
         timeout_secs: Some(1),
     })
@@ -81,6 +85,44 @@ fn run_command_does_not_wait_for_background_jobs() {
     let out = run("sleep 30 & echo done").unwrap();
     assert!(start.elapsed() < Duration::from_secs(5));
     assert!(out.starts_with("exit code: 0\nstdout:\ndone\n"), "{out}");
+}
+
+#[test]
+fn denied_command_does_not_run() {
+    let dir = std::env::temp_dir().join(format!("codear-run-deny-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let sb = Sandbox::new(&dir).unwrap();
+    let asked = std::cell::RefCell::new(Vec::new());
+    let deny = |cmd: &str| {
+        asked.borrow_mut().push(cmd.to_string());
+        Err("the user denied it".to_string())
+    };
+
+    let args = RunCommandArgs { command: "touch ran".into(), timeout_secs: None };
+    let err = run_command(&sb, &deny, args).unwrap_err().to_string();
+    assert_eq!(err, "command not run: the user denied it");
+    assert_eq!(*asked.borrow(), ["touch ran"]);
+    assert!(!dir.join("ran").exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn command_gets_only_allowed_env() {
+    // Set for this test process by `cargo test`, so it would leak without the cleanup.
+    assert!(std::env::var_os("CARGO_MANIFEST_DIR").is_some());
+    let out = run("echo \"[${CARGO_MANIFEST_DIR:-unset}] [${OPENAI_API_KEY:-unset}]\"").unwrap();
+    assert!(out.contains("stdout:\n[unset] [unset]\n"), "{out}");
+
+    let out = run("env").unwrap();
+    let stdout = out.split("stdout:\n").nth(1).unwrap().split("\nstderr:").next().unwrap();
+    for line in stdout.lines() {
+        let name = line.split('=').next().unwrap();
+        // `sh` sets PWD, SHLVL, OLDPWD and `_` itself.
+        let from_shell = ["PWD", "SHLVL", "OLDPWD", "_"].contains(&name);
+        assert!(ALLOWED_ENV.contains(&name) || from_shell, "leaked {name}");
+    }
+    // Commands still find programs.
+    assert!(run("command -v ls").unwrap().starts_with("exit code: 0\n"));
 }
 
 #[test]

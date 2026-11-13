@@ -9,12 +9,19 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
-use super::{Sandbox, ToolError, ToolResult};
+use super::{Approver, Sandbox, ToolError, ToolResult};
 
 pub const DEFAULT_TIMEOUT_SECS: u64 = 60;
 pub const MAX_TIMEOUT_SECS: u64 = 300;
 /// Only the last this-many bytes of stdout/stderr are kept.
 pub const MAX_OUTPUT_BYTES: usize = 30 * 1024;
+
+/// The only environment variables a command gets; everything else (API keys,
+/// tokens, ...) is dropped. Each is passed only if set.
+pub const ALLOWED_ENV: &[&str] = &[
+    "PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TERM", "TZ",
+    "LANG", "LC_ALL", "LC_CTYPE", "CARGO_HOME", "RUSTUP_HOME",
+];
 
 const SIGKILL: i32 = 9;
 
@@ -32,6 +39,10 @@ pub struct RunCommandArgs {
 
 /// Runs `sh -c <command>` in the sandbox root with no stdin. Returns the exit code,
 /// stdout and stderr, keeping the last `MAX_OUTPUT_BYTES` of each.
+///
+/// Nothing runs until `approver` says yes; a refusal is returned as an error
+/// naming the reason. The command sees only the `ALLOWED_ENV` variables, so
+/// secrets in this process's environment (e.g. `OPENAI_API_KEY`) can't leak.
 ///
 /// The command runs in its own process group. On timeout the whole group is
 /// killed; once `sh` exits, anything it left running in the background is
@@ -51,16 +62,22 @@ pub struct RunCommandArgs {
 ///
 /// with `exit code: killed (timed out after Ns)` or `exit code: killed by signal N`
 /// instead when there is no code, and `stdout (last B of T bytes):` when cut.
-pub fn run_command(sb: &Sandbox, args: RunCommandArgs) -> ToolResult {
+pub fn run_command(sb: &Sandbox, approver: &dyn Approver, args: RunCommandArgs) -> ToolResult {
     if args.command.trim().is_empty() {
         return Err(ToolError::InvalidArgs("command is empty".into()));
     }
     let timeout = effective_timeout(args.timeout_secs);
 
+    approver
+        .approve(&args.command)
+        .map_err(|reason| ToolError::Failed(format!("command not run: {reason}")))?;
+
     let mut child = Command::new("sh")
         .arg("-c")
         .arg(&args.command)
         .current_dir(sb.root())
+        .env_clear()
+        .envs(ALLOWED_ENV.iter().filter_map(|k| std::env::var_os(k).map(|v| (k, v))))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use crate::provider::OpenAIProvider;
-use crate::tools::{self, Sandbox};
+use crate::tools::{self, Sandbox, TerminalApprover};
 
 /// Run the CLI with the given arguments (excluding the program name).
 pub fn run(args: &[String]) -> Result<(), String> {
@@ -18,7 +18,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
         Some("tool") => {
             let (repo, name, json) = parse_tool_args(&args[1..])?;
             let sb = open_sandbox(repo)?;
-            let output = tools::dispatch(&sb, name, &json).map_err(|e| format!("tool {name}: {e}"))?;
+            let output = tools::dispatch(&sb, &TerminalApprover, name, &json).map_err(|e| format!("tool {name}: {e}"))?;
             println!("{output}");
             Ok(())
         }
@@ -102,7 +102,7 @@ fn capitalize(s: &str) -> String {
 }
 
 fn usage() -> String {
-    "usage: agentcli <command> [args]\n\ncommands:\n  echo <text>            print the text with its first letter capitalized\n  agent <dir> <prompt>   send the prompt to OpenAI and print the reply\n                         (needs OPENAI_API_KEY; optional OPENAI_MODEL, OPENAI_BASE_URL)\n  tool [--repo <path>] <name> [json]\n                         run a tool directly with JSON args (sample args if omitted),\n                         inside <path> (default: current directory)\n                         tools: list_dir, read_file, search, write_file, edit_file, run_command".to_string()
+    "usage: agentcli <command> [args]\n\ncommands:\n  echo <text>            print the text with its first letter capitalized\n  agent <dir> <prompt>   send the prompt to OpenAI and print the reply\n                         (needs OPENAI_API_KEY; optional OPENAI_MODEL, OPENAI_BASE_URL)\n  tool [--repo <path>] <name> [json]\n                         run a tool directly with JSON args (sample args if omitted),\n                         inside <path> (default: current directory);\n                         run_command asks for approval on the terminal first\n                         tools: list_dir, read_file, search, write_file, edit_file, run_command".to_string()
 }
 
 #[cfg(test)]
