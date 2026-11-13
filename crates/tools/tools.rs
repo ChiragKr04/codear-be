@@ -36,7 +36,7 @@ pub fn sample_args(name: &str) -> Option<&'static str> {
         "read_file" => r#"{"path": "src/main.rs", "start_line": 1, "end_line": 5}"#,
         "search" => r#"{"pattern": "fn main", "glob": "*.rs"}"#,
         "write_file" => r#"{"path": "tmp/hello.txt", "content": "hello\nworld\n"}"#,
-        "edit_file" => r#"{"path": "src/main.rs", "old_str": "foo", "new_str": "bar"}"#,
+        "edit_file" => r#"{"path": "tmp/hello.txt", "old_str": "world", "new_str": "there"}"#,
         "run_command" => r#"{"command": "echo hi"}"#,
         _ => return None,
     })
@@ -74,3 +74,7 @@ mod search_tests;
 #[cfg(test)]
 #[path = "tests/write_file_tests.rs"]
 mod write_file_tests;
+
+#[cfg(test)]
+#[path = "tests/edit_file_tests.rs"]
+mod edit_file_tests;
