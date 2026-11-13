@@ -1,10 +1,15 @@
 use super::run_command::*;
-use super::{ToolError, ToolResult};
+use super::{Sandbox, ToolError, ToolResult};
 
 use std::time::{Duration, Instant};
 
+/// Sandbox on the cwd (the crate root under `cargo test`).
+fn sb() -> Sandbox {
+    Sandbox::new(&std::env::current_dir().unwrap()).unwrap()
+}
+
 fn run(command: &str) -> ToolResult {
-    run_command(RunCommandArgs { command: command.into(), timeout_secs: None })
+    run_command(&sb(), RunCommandArgs { command: command.into(), timeout_secs: None })
 }
 
 #[test]
@@ -33,10 +38,14 @@ fn run_command_has_no_stdin() {
 }
 
 #[test]
-fn run_command_runs_in_current_dir() {
-    let out = run("pwd -P").unwrap();
-    let cwd = std::env::current_dir().unwrap().canonicalize().unwrap();
-    assert!(out.contains(&format!("stdout:\n{}\n", cwd.display())), "{out}");
+fn run_command_runs_in_sandbox_root() {
+    let dir = std::env::temp_dir().join(format!("codear-run-root-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let sb = Sandbox::new(&dir).unwrap();
+    let out = run_command(&sb, RunCommandArgs { command: "pwd -P".into(), timeout_secs: None })
+        .unwrap();
+    assert!(out.contains(&format!("stdout:\n{}\n", sb.root().display())), "{out}");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -57,7 +66,7 @@ fn run_command_keeps_last_bytes_of_long_output() {
 #[test]
 fn run_command_times_out_and_kills() {
     let start = Instant::now();
-    let out = run_command(RunCommandArgs {
+    let out = run_command(&sb(), RunCommandArgs {
         command: "echo started; sleep 30".into(),
         timeout_secs: Some(1),
     })

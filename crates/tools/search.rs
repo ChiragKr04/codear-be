@@ -10,7 +10,7 @@ use regex::Regex;
 use serde::Deserialize;
 
 use super::list_dir::SKIP;
-use super::{ToolError, ToolResult};
+use super::{Sandbox, ToolError, ToolResult};
 
 pub const MAX_MATCHES: usize = 200;
 /// Matched lines longer than this (in chars) are cut, so one minified file
@@ -23,13 +23,14 @@ const BINARY_SNIFF_BYTES: usize = 8 * 1024;
 pub struct SearchArgs {
     /// Regex pattern.
     pub pattern: String,
-    /// Directory or file to search; defaults to the repo root.
+    /// Directory or file to search, relative to the repo root; defaults to the root.
     pub path: Option<String>,
     /// Restrict to files matching this glob, e.g. `*.rs`.
     pub glob: Option<String>,
 }
 
-/// Regex search across files, respecting `.gitignore`. Returns `file:line: text`,
+/// Regex search across files, respecting `.gitignore`. Returns `file:line: text`
+/// (file relative to the sandbox root),
 /// at most `MAX_MATCHES` matches.
 ///
 /// Files are visited in name order, so output is stable. `.gitignore`,
@@ -37,22 +38,22 @@ pub struct SearchArgs {
 /// files and `SKIP` dirs are skipped, as are binary files. `glob` is
 /// gitignore-style and relative to `path`: `*.rs` matches at any depth.
 /// Invalid UTF-8 is replaced with `U+FFFD`.
-pub fn search(args: SearchArgs) -> ToolResult {
+pub fn search(sb: &Sandbox, args: SearchArgs) -> ToolResult {
     let re = Regex::new(&args.pattern)
         .map_err(|e| ToolError::InvalidArgs(format!("bad regex: {e}")))?;
 
     let root_str = args.path.as_deref().unwrap_or(".");
-    let root = Path::new(root_str);
+    let root = sb.resolve(root_str)?;
     if !root.exists() {
         return Err(ToolError::Failed(format!("no such file or directory: {root_str}")));
     }
 
-    let mut walk = WalkBuilder::new(root);
+    let mut walk = WalkBuilder::new(&root);
     walk.require_git(false)
         .sort_by_file_name(|a, b| a.cmp(b))
         .filter_entry(|e| !SKIP.contains(&e.file_name().to_string_lossy().as_ref()));
     if let Some(glob) = &args.glob {
-        let overrides = OverrideBuilder::new(root)
+        let overrides = OverrideBuilder::new(&root)
             .add(glob)
             .and_then(|b| b.build())
             .map_err(|e| ToolError::InvalidArgs(format!("bad glob: {e}")))?;
@@ -64,7 +65,7 @@ pub fn search(args: SearchArgs) -> ToolResult {
         if !entry.file_type().is_some_and(|t| t.is_file()) {
             continue;
         }
-        let display = display_path(entry.path());
+        let display = display_path(sb, entry.path());
         // Unreadable files are skipped rather than failing the whole search.
         let _ = search_file(entry.path(), &display, &re, &mut out);
         if out.len() > MAX_MATCHES {
@@ -116,9 +117,9 @@ fn search_file(path: &Path, display: &str, re: &Regex, out: &mut Vec<String>) ->
     }
 }
 
-/// `path` as shown in output: the leading `./` of the default root dropped.
-fn display_path(path: &Path) -> String {
-    let path = path.strip_prefix(".").unwrap_or(path);
+/// `path` as shown in output: relative to the sandbox root.
+fn display_path(sb: &Sandbox, path: &Path) -> String {
+    let path = path.strip_prefix(sb.root()).unwrap_or(path);
     path.to_string_lossy().into_owned()
 }
 

@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
-use super::{ToolError, ToolResult};
+use super::{Sandbox, ToolError, ToolResult};
 
 pub const DEFAULT_TIMEOUT_SECS: u64 = 60;
 pub const MAX_TIMEOUT_SECS: u64 = 300;
@@ -30,7 +30,7 @@ pub struct RunCommandArgs {
     pub timeout_secs: Option<u64>,
 }
 
-/// Runs `sh -c <command>` in the repo root with no stdin. Returns the exit code,
+/// Runs `sh -c <command>` in the sandbox root with no stdin. Returns the exit code,
 /// stdout and stderr, keeping the last `MAX_OUTPUT_BYTES` of each.
 ///
 /// The command runs in its own process group. On timeout the whole group is
@@ -51,7 +51,7 @@ pub struct RunCommandArgs {
 ///
 /// with `exit code: killed (timed out after Ns)` or `exit code: killed by signal N`
 /// instead when there is no code, and `stdout (last B of T bytes):` when cut.
-pub fn run_command(args: RunCommandArgs) -> ToolResult {
+pub fn run_command(sb: &Sandbox, args: RunCommandArgs) -> ToolResult {
     if args.command.trim().is_empty() {
         return Err(ToolError::InvalidArgs("command is empty".into()));
     }
@@ -60,6 +60,7 @@ pub fn run_command(args: RunCommandArgs) -> ToolResult {
     let mut child = Command::new("sh")
         .arg("-c")
         .arg(&args.command)
+        .current_dir(sb.root())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

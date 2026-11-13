@@ -49,9 +49,11 @@ fn tool_args_reject_missing_or_unknown_name() {
 
 #[test]
 fn every_tool_runs_with_its_sample_args() {
+    // Sample args assume the crate root (e.g. `src/main.rs`), the cwd under `cargo test`.
+    let sb = open_sandbox(None).unwrap();
     for name in tools::TOOL_NAMES {
         let json = tools::sample_args(name).unwrap();
-        let out = tools::dispatch(name, json);
+        let out = tools::dispatch(&sb, name, json);
         assert!(out.is_ok(), "{name}: {out:?}");
     }
 }
@@ -75,7 +77,16 @@ fn tool_args_reject_repo_without_path() {
 }
 
 #[test]
-fn enter_repo_rejects_missing_directory() {
-    let err = enter_repo(Path::new("/definitely/not/here")).unwrap_err();
-    assert!(err.contains("not a directory"));
+fn open_sandbox_rejects_missing_directory() {
+    let err = open_sandbox(Some(Path::new("/definitely/not/here"))).unwrap_err();
+    assert!(err.contains("--repo /definitely/not/here"), "{err}");
+}
+
+#[test]
+fn tools_resolve_paths_against_repo_not_cwd() {
+    // `src/main.rs` exists in the cwd under `cargo test`, but not under `crates/`.
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("crates");
+    let sb = open_sandbox(Some(&repo)).unwrap();
+    assert!(tools::dispatch(&sb, "read_file", r#"{"path": "src/main.rs"}"#).is_err());
+    assert!(tools::dispatch(&sb, "read_file", r#"{"path": "cli/cli.rs"}"#).is_ok());
 }

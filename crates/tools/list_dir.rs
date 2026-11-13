@@ -5,7 +5,7 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-use super::{ToolError, ToolResult};
+use super::{Sandbox, ToolError, ToolResult};
 
 pub const DEFAULT_DEPTH: usize = 2;
 pub const MAX_ENTRIES: usize = usize::MAX;
@@ -19,13 +19,13 @@ pub struct ListDirArgs {
     pub depth: Option<usize>,
 }
 
-/// Tree listing of `path` (relative to the current working directory) down to
+/// Tree listing of `path` (relative to the sandbox root) down to
 /// `depth` levels. Directories end in `/`; entries are sorted by name and
 /// indented two spaces per level. Skips `SKIP`; at most `MAX_ENTRIES` entries,
 /// with a note when cut.
 // TODO: also skip `.gitignore` matches.
-pub fn list_dir(args: ListDirArgs) -> ToolResult {
-    let root = Path::new(&args.path);
+pub fn list_dir(sb: &Sandbox, args: ListDirArgs) -> ToolResult {
+    let root = sb.resolve(&args.path)?;
     if !root.is_dir() {
         return Err(ToolError::Failed(format!("not a directory: {}", args.path)));
     }
@@ -35,8 +35,8 @@ pub fn list_dir(args: ListDirArgs) -> ToolResult {
         entries: 0,
         max_depth: args.depth.unwrap_or(DEFAULT_DEPTH),
     };
-    fs::read_dir(root)?; // surface an unreadable root as an error, not an empty tree
-    if tree.walk(root, 1) == Walk::Full {
+    fs::read_dir(&root)?; // surface an unreadable root as an error, not an empty tree
+    if tree.walk(&root, 1) == Walk::Full {
         tree.lines.push(format!("[cut at {MAX_ENTRIES} entries]"));
     }
     Ok(tree.lines.join("\n"))

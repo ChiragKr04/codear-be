@@ -1,11 +1,10 @@
 //! `write_file`: create or overwrite a file.
 
 use std::fs;
-use std::path::Path;
 
 use serde::Deserialize;
 
-use super::{ToolError, ToolResult};
+use super::{Sandbox, ToolError, ToolResult};
 
 /// Above this many line comparisons the diff counts are approximated
 /// (every differing middle line counted as removed + added) to stay fast.
@@ -24,16 +23,16 @@ pub struct WriteFileArgs {
 /// - `unchanged <path> (N lines)`, in which case nothing is written.
 ///
 /// Lines keep their `\n`, so adding or dropping a trailing newline counts as a change.
-pub fn write_file(args: WriteFileArgs) -> ToolResult {
+pub fn write_file(sb: &Sandbox, args: WriteFileArgs) -> ToolResult {
     if args.path.trim().is_empty() {
         return Err(ToolError::InvalidArgs("path is empty".into()));
     }
-    let path = Path::new(&args.path);
+    let path = sb.resolve(&args.path)?;
     if path.is_dir() {
         return Err(ToolError::Failed(format!("is a directory: {}", args.path)));
     }
 
-    let old = match fs::read(path) {
+    let old = match fs::read(&path) {
         Ok(bytes) => Some(String::from_utf8_lossy(&bytes).into_owned()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => return Err(e.into()),
@@ -49,7 +48,7 @@ pub fn write_file(args: WriteFileArgs) -> ToolResult {
     if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
         fs::create_dir_all(parent)?;
     }
-    fs::write(path, &args.content)?;
+    fs::write(&path, &args.content)?;
 
     Ok(match old {
         None => format!("created {} (+{new_lines} lines, {bytes} bytes)", args.path),

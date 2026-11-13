@@ -12,6 +12,7 @@ pub mod edit_file;
 pub mod list_dir;
 pub mod read_file;
 pub mod run_command;
+pub mod sandbox;
 pub mod search;
 pub mod write_file;
 
@@ -20,6 +21,7 @@ pub use error::{ToolError, ToolResult};
 pub use list_dir::list_dir;
 pub use read_file::read_file;
 pub use run_command::run_command;
+pub use sandbox::Sandbox;
 pub use search::search;
 pub use write_file::write_file;
 
@@ -43,14 +45,15 @@ pub fn sample_args(name: &str) -> Option<&'static str> {
 }
 
 /// Runs the tool called `name` with its JSON-encoded `args` (as sent by the model).
-pub fn dispatch(name: &str, args: &str) -> ToolResult {
+/// Every path the model gives is resolved inside `sb`.
+pub fn dispatch(sb: &Sandbox, name: &str, args: &str) -> ToolResult {
     match name {
-        "list_dir" => list_dir(parse(args)?),
-        "read_file" => read_file(parse(args)?),
-        "search" => search(parse(args)?),
-        "write_file" => write_file(parse(args)?),
-        "edit_file" => edit_file(parse(args)?),
-        "run_command" => run_command(parse(args)?),
+        "list_dir" => list_dir(sb, parse(args)?),
+        "read_file" => read_file(sb, parse(args)?),
+        "search" => search(sb, parse(args)?),
+        "write_file" => write_file(sb, parse(args)?),
+        "edit_file" => edit_file(sb, parse(args)?),
+        "run_command" => run_command(sb, parse(args)?),
         other => Err(ToolError::UnknownTool(other.to_string())),
     }
 }
@@ -58,6 +61,10 @@ pub fn dispatch(name: &str, args: &str) -> ToolResult {
 fn parse<'a, T: Deserialize<'a>>(args: &'a str) -> Result<T, ToolError> {
     serde_json::from_str(args).map_err(|e| ToolError::InvalidArgs(e.to_string()))
 }
+
+#[cfg(test)]
+#[path = "tests/sandbox_tests.rs"]
+mod sandbox_tests;
 
 #[cfg(test)]
 #[path = "tests/list_dir_tests.rs"]

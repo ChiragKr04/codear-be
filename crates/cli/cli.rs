@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use crate::provider::OpenAIProvider;
-use crate::tools;
+use crate::tools::{self, Sandbox};
 
 /// Run the CLI with the given arguments (excluding the program name).
 pub fn run(args: &[String]) -> Result<(), String> {
@@ -17,10 +17,8 @@ pub fn run(args: &[String]) -> Result<(), String> {
         }
         Some("tool") => {
             let (repo, name, json) = parse_tool_args(&args[1..])?;
-            if let Some(repo) = repo {
-                enter_repo(repo)?;
-            }
-            let output = tools::dispatch(name, &json).map_err(|e| format!("tool {name}: {e}"))?;
+            let sb = open_sandbox(repo)?;
+            let output = tools::dispatch(&sb, name, &json).map_err(|e| format!("tool {name}: {e}"))?;
             println!("{output}");
             Ok(())
         }
@@ -79,13 +77,13 @@ fn parse_tool_args(args: &[String]) -> Result<(Option<&Path>, &str, String), Str
     Ok((repo, name, json))
 }
 
-/// Make `repo` the working directory, so tools run against it.
-fn enter_repo(repo: &Path) -> Result<(), String> {
-    if !repo.is_dir() {
-        return Err(format!("tool: --repo is not a directory: {}", repo.display()));
-    }
-    std::env::set_current_dir(repo)
-        .map_err(|e| format!("tool: cannot enter {}: {e}", repo.display()))
+/// The sandbox tools run in: `repo`, or the current directory when not given.
+fn open_sandbox(repo: Option<&Path>) -> Result<Sandbox, String> {
+    let repo = match repo {
+        Some(repo) => repo.to_path_buf(),
+        None => std::env::current_dir().map_err(|e| format!("tool: no current directory: {e}"))?,
+    };
+    Sandbox::new(&repo).map_err(|e| format!("tool: --repo {}: {e}", repo.display()))
 }
 
 fn run_agent(_dir: &Path, prompt: &str) -> Result<(), String> {

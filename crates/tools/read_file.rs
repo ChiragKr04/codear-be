@@ -2,11 +2,10 @@
 
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::path::Path;
 
 use serde::Deserialize;
 
-use super::{ToolError, ToolResult};
+use super::{Sandbox, ToolError, ToolResult};
 
 pub const MAX_LINES: usize = 2_000;
 pub const MAX_BYTES: usize = 100 * 1024;
@@ -20,13 +19,13 @@ pub struct ReadFileArgs {
     pub end_line: Option<usize>,
 }
 
-/// Returns numbered lines of `path`, optionally limited to a line range.
+/// Returns numbered lines of `path` (inside the sandbox), optionally limited to a line range.
 /// At most `MAX_LINES` lines or `MAX_BYTES`, with a note when cut.
 ///
 /// Each line is `{number:>6}\t{text}`. The file is streamed: lines before
 /// `start_line` are skipped without being kept, and reading stops at
 /// `end_line` or a limit. Invalid UTF-8 is replaced with `U+FFFD`.
-pub fn read_file(args: ReadFileArgs) -> ToolResult {
+pub fn read_file(sb: &Sandbox, args: ReadFileArgs) -> ToolResult {
     let start = args.start_line.unwrap_or(1);
     if start == 0 {
         return Err(ToolError::InvalidArgs("start_line is 1-based; got 0".into()));
@@ -39,11 +38,13 @@ pub fn read_file(args: ReadFileArgs) -> ToolResult {
         }
     }
 
-    let path = Path::new(&args.path);
+    let path = sb.resolve(&args.path)?;
     if path.is_dir() {
         return Err(ToolError::Failed(format!("is a directory: {}", args.path)));
     }
-    let mut reader = BufReader::new(File::open(path)?);
+    let file = File::open(&path)
+        .map_err(|e| ToolError::Failed(format!("cannot open {}: {e}", args.path)))?;
+    let mut reader = BufReader::new(file);
 
     let mut out = String::new();
     let mut shown = 0;

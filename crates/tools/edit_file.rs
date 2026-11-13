@@ -1,11 +1,10 @@
 //! `edit_file`: replace one exact match in a file.
 
 use std::fs;
-use std::path::Path;
 
 use serde::Deserialize;
 
-use super::{ToolError, ToolResult};
+use super::{Sandbox, ToolError, ToolResult};
 
 /// At most this many match line numbers are listed in the "too many matches" error.
 pub const MAX_LISTED_MATCHES: usize = 10;
@@ -26,7 +25,7 @@ pub struct EditFileArgs {
 ///
 /// On success returns `edited <path> at line L: -R +A lines (now N lines)`,
 /// where R and A are the line counts of `old_str` and `new_str`.
-pub fn edit_file(args: EditFileArgs) -> ToolResult {
+pub fn edit_file(sb: &Sandbox, args: EditFileArgs) -> ToolResult {
     if args.path.trim().is_empty() {
         return Err(ToolError::InvalidArgs("path is empty".into()));
     }
@@ -39,12 +38,12 @@ pub fn edit_file(args: EditFileArgs) -> ToolResult {
         return Err(ToolError::InvalidArgs("old_str and new_str are identical".into()));
     }
 
-    let path = Path::new(&args.path);
+    let path = sb.resolve(&args.path)?;
     if path.is_dir() {
         return Err(ToolError::Failed(format!("is a directory: {}", args.path)));
     }
     // Strict UTF-8: a lossy decode would corrupt the file when written back.
-    let content = String::from_utf8(fs::read(path)?)
+    let content = String::from_utf8(fs::read(&path)?)
         .map_err(|_| ToolError::Failed(format!("not valid UTF-8: {}", args.path)))?;
 
     let matches = find_all(&content, &args.old_str);
@@ -72,7 +71,7 @@ pub fn edit_file(args: EditFileArgs) -> ToolResult {
     updated.push_str(&content[..at]);
     updated.push_str(&args.new_str);
     updated.push_str(&content[at + args.old_str.len()..]);
-    fs::write(path, &updated)?;
+    fs::write(&path, &updated)?;
 
     Ok(format!(
         "edited {} at line {}: -{} +{} lines (now {} lines)",

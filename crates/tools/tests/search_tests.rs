@@ -1,5 +1,5 @@
 use super::search::*;
-use super::{ToolError, ToolResult};
+use super::{Sandbox, ToolError, ToolResult};
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -12,18 +12,23 @@ fn temp_dir(name: &str) -> PathBuf {
     dir
 }
 
-fn run(pattern: &str, path: &Path, glob: Option<&str>) -> ToolResult {
-    search(SearchArgs {
+/// Searches `path` (relative to `dir`) through a sandbox on `dir`.
+fn run_in(dir: &Path, pattern: &str, path: Option<&str>, glob: Option<&str>) -> ToolResult {
+    let sb = Sandbox::new(dir).unwrap();
+    search(&sb, SearchArgs {
         pattern: pattern.into(),
-        path: Some(path.to_string_lossy().into_owned()),
+        path: path.map(Into::into),
         glob: glob.map(Into::into),
     })
 }
 
-/// Output lines with the temp dir prefix removed, for readable asserts.
-fn lines(out: &str, dir: &Path) -> Vec<String> {
-    let prefix = format!("{}/", dir.display());
-    out.lines().map(|l| l.replace(&prefix, "")).collect()
+/// Searches the whole sandbox on `dir`.
+fn run(pattern: &str, dir: &Path, glob: Option<&str>) -> ToolResult {
+    run_in(dir, pattern, None, glob)
+}
+
+fn lines(out: &str) -> Vec<&str> {
+    out.lines().collect()
 }
 
 #[test]
@@ -35,7 +40,7 @@ fn search_finds_matches_in_name_order() {
 
     let out = run(r"^fn \w+", &dir, None).unwrap();
     assert_eq!(
-        lines(&out, &dir),
+        lines(&out),
         ["a.txt:2: fn in text", "src/main.rs:1: fn main() {}", "src/main.rs:3: fn helper() {}"]
     );
 
@@ -54,7 +59,7 @@ fn search_respects_gitignore_without_git_repo() {
     fs::write(dir.join("kept.rs"), "needle\n").unwrap();
 
     let out = run("needle", &dir, None).unwrap();
-    assert_eq!(lines(&out, &dir), ["kept.rs:1: needle"]);
+    assert_eq!(lines(&out), ["kept.rs:1: needle"]);
 
     let _ = fs::remove_dir_all(&dir);
 }
@@ -67,7 +72,7 @@ fn search_filters_by_glob_at_any_depth() {
     fs::write(dir.join("deep/er/a.md"), "needle\n").unwrap();
 
     let out = run("needle", &dir, Some("*.rs")).unwrap();
-    assert_eq!(lines(&out, &dir), ["deep/er/a.rs:1: needle"]);
+    assert_eq!(lines(&out), ["deep/er/a.rs:1: needle"]);
 
     let _ = fs::remove_dir_all(&dir);
 }
@@ -79,7 +84,7 @@ fn search_skips_binary_files() {
     fs::write(dir.join("text.txt"), "needle\n").unwrap();
 
     let out = run("needle", &dir, None).unwrap();
-    assert_eq!(lines(&out, &dir), ["text.txt:1: needle"]);
+    assert_eq!(lines(&out), ["text.txt:1: needle"]);
 
     let _ = fs::remove_dir_all(&dir);
 }
@@ -87,11 +92,12 @@ fn search_skips_binary_files() {
 #[test]
 fn search_accepts_a_single_file_path() {
     let dir = temp_dir("file");
-    let file = dir.join("one.rs");
-    fs::write(&file, "a\nneedle\n").unwrap();
+    fs::create_dir_all(dir.join("sub")).unwrap();
+    fs::write(dir.join("sub/one.rs"), "a\nneedle\n").unwrap();
+    fs::write(dir.join("two.rs"), "needle\n").unwrap();
 
-    let out = run("needle", &file, None).unwrap();
-    assert_eq!(lines(&out, &dir), ["one.rs:2: needle"]);
+    let out = run_in(&dir, "needle", Some("sub/one.rs"), None).unwrap();
+    assert_eq!(lines(&out), ["sub/one.rs:2: needle"]);
 
     let _ = fs::remove_dir_all(&dir);
 }
@@ -102,7 +108,7 @@ fn search_caps_matches_with_note() {
     fs::write(dir.join("many.txt"), "hit\n".repeat(MAX_MATCHES + 50)).unwrap();
 
     let out = run("hit", &dir, None).unwrap();
-    let got = lines(&out, &dir);
+    let got = lines(&out);
     assert_eq!(got.len(), MAX_MATCHES + 1);
     assert_eq!(got[MAX_MATCHES - 1], format!("many.txt:{MAX_MATCHES}: hit"));
     assert!(got[MAX_MATCHES].starts_with(&format!("[cut at {MAX_MATCHES} matches")));
@@ -140,7 +146,7 @@ fn search_clips_long_lines() {
     fs::write(dir.join("min.js"), format!("needle{}\n", "é".repeat(MAX_LINE_CHARS * 2))).unwrap();
 
     let out = run("needle", &dir, None).unwrap();
-    let text = lines(&out, &dir)[0].strip_prefix("min.js:1: ").unwrap().to_string();
+    let text = lines(&out)[0].strip_prefix("min.js:1: ").unwrap().to_string();
     assert_eq!(text.chars().count(), MAX_LINE_CHARS + 1); // + the `…` marker
     assert!(text.ends_with('…'));
 
@@ -159,9 +165,10 @@ fn search_reports_no_matches() {
 fn search_rejects_bad_regex_and_missing_path() {
     let dir = temp_dir("errors");
     assert!(matches!(run("(", &dir, None), Err(ToolError::InvalidArgs(_))));
-    assert!(matches!(
-        run("x", Path::new("/definitely/not/here"), None),
-        Err(ToolError::Failed(_))
-    ));
+    assert!(matches!(run_in(&dir, "x", Some("missing"), None), Err(ToolError::Failed(_))));
+    for path in ["/", "..", "/etc"] {
+        let err = run_in(&dir, "x", Some(path), None).unwrap_err().to_string();
+        assert!(err.contains("outside the repo"), "{path}: {err}");
+    }
     let _ = fs::remove_dir_all(&dir);
 }
