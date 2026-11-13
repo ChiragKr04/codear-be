@@ -78,3 +78,7 @@ mod write_file_tests;
 #[cfg(test)]
 #[path = "tests/edit_file_tests.rs"]
 mod edit_file_tests;
+
+#[cfg(test)]
+#[path = "tests/run_command_tests.rs"]
+mod run_command_tests;
