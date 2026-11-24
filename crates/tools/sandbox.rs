@@ -5,6 +5,11 @@ use std::path::{Component, Path, PathBuf};
 
 use super::ToolError;
 
+/// Folders the agent may read but never change: `.git` (history) and
+/// `.agentcli` (its own config, e.g. `test_command`, which it could otherwise
+/// rewrite to something that always passes).
+pub const PROTECTED: &[&str] = &[".git", ".agentcli"];
+
 /// The only folder the agent may touch. Created once from `--repo` (or the
 /// current directory) and passed to every tool.
 #[derive(Debug, Clone)]
@@ -63,6 +68,26 @@ impl Sandbox {
         // 3. The real path must still be inside the repo.
         if !real.starts_with(&self.root) {
             return Err(outside());
+        }
+        Ok(real)
+    }
+
+    /// Like `resolve`, but also refuses paths inside a `PROTECTED` folder.
+    /// Used by the tools that write; reading stays on `resolve`.
+    ///
+    /// Checked on the resolved path, so a symlink into a protected folder is
+    /// refused too. Case-insensitive, because macOS file names are by default
+    /// (`.AGENTCLI` is the same folder as `.agentcli`).
+    pub fn resolve_for_write(&self, rel: &str) -> Result<PathBuf, ToolError> {
+        let real = self.resolve(rel)?;
+        let inside = real.strip_prefix(&self.root).expect("`resolve` keeps paths inside the root");
+        if let Some(Component::Normal(first)) = inside.components().next() {
+            let first = first.to_string_lossy();
+            if PROTECTED.iter().any(|p| first.eq_ignore_ascii_case(p)) {
+                return Err(ToolError::Failed(format!(
+                    "{rel:?} is inside a protected folder and cannot be changed"
+                )));
+            }
         }
         Ok(real)
     }

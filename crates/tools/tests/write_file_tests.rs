@@ -105,3 +105,17 @@ fn huge_diff_is_approximate() {
     let d = line_diff(&old, &new);
     assert_eq!((d.added, d.removed, d.approximate), (3000, 3000, true));
 }
+
+#[test]
+fn refuses_protected_folders() {
+    let dir = temp_dir("protected");
+    fs::create_dir_all(dir.join(".agentcli")).unwrap();
+    fs::write(dir.join(".agentcli/config.toml"), "test_command = \"cargo test\"\n").unwrap();
+    for path in [".agentcli/config.toml", ".git/config"] {
+        let err = write(&dir, &dir.join(path), "test_command = \"echo ok\"\n").unwrap_err().to_string();
+        assert!(err.contains("protected folder"), "{path}: {err}");
+    }
+    assert_eq!(fs::read_to_string(dir.join(".agentcli/config.toml")).unwrap(), "test_command = \"cargo test\"\n");
+    assert!(!dir.join(".git").exists());
+    let _ = fs::remove_dir_all(&dir);
+}

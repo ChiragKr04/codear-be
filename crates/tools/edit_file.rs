@@ -69,7 +69,7 @@ pub fn edit_file(sb: &Sandbox, args: EditFileArgs) -> ToolResult {
         return Err(ToolError::InvalidArgs("old_str and new_str are identical".into()));
     }
 
-    let path = sb.resolve(&args.path)?;
+    let path = sb.resolve_for_write(&args.path)?;
     if path.is_dir() {
         return Err(ToolError::Failed(format!("is a directory: {}", args.path)));
     }

@@ -121,7 +121,37 @@ fn run_agent(dir: &Path, prompt: &str, max_turns: usize) -> Result<(), String> {
     let answer = agent::run_agent(&provider, &sb, &TerminalApprover, prompt, max_turns)
         .map_err(|e| format!("agent: {e}"))?;
     println!("{answer}");
+    print_changes(sb.root());
     Ok(())
+}
+
+/// Prints what git says changed under `root`, so the model's own summary of
+/// its edits can be checked against the files. Best effort: a missing `git`
+/// or a non-repo directory prints a note instead of failing the run.
+fn print_changes(root: &Path) {
+    let git = |args: &[&str]| -> Option<String> {
+        let out = std::process::Command::new("git").args(args).current_dir(root).output().ok()?;
+        out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+    };
+
+    // `git diff --stat` skips untracked files, so list new files separately.
+    let (Some(stat), Some(untracked)) = (
+        git(&["diff", "--stat"]),
+        git(&["ls-files", "--others", "--exclude-standard"]),
+    ) else {
+        println!("\nFiles changed: unknown ({} is not a git repository)", root.display());
+        return;
+    };
+
+    println!("\nFiles changed:");
+    if stat.trim().is_empty() && untracked.trim().is_empty() {
+        println!(" (none)");
+        return;
+    }
+    print!("{stat}");
+    for path in untracked.lines() {
+        println!(" {path} (new)");
+    }
 }
 
 fn capitalize(s: &str) -> String {

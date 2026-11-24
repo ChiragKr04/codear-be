@@ -132,3 +132,15 @@ fn find_all_handles_multibyte_chars() {
     assert_eq!(find_all("ééé", "éé"), vec![0, 2]);
     assert_eq!(find_all("abc", "x"), Vec::<usize>::new());
 }
+
+#[test]
+fn refuses_protected_folders() {
+    let dir = temp_dir("protected");
+    let config = dir.join(".agentcli/config.toml");
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    fs::write(&config, "test_command = \"cargo test\"\n").unwrap();
+    let err = edit(&dir, &config, "cargo test", "echo ok").unwrap_err().to_string();
+    assert!(err.contains("protected folder"), "{err}");
+    assert_eq!(fs::read_to_string(&config).unwrap(), "test_command = \"cargo test\"\n");
+    let _ = fs::remove_dir_all(&dir);
+}

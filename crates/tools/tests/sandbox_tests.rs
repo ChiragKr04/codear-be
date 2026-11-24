@@ -102,3 +102,45 @@ fn allows_symlinks_staying_inside() {
     assert_eq!(sb.resolve("rel_link").unwrap(), dir.join("real/f"));
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn write_refuses_protected_folders() {
+    let dir = temp_dir("protected");
+    fs::create_dir_all(dir.join(".git")).unwrap();
+    fs::create_dir_all(dir.join(".agentcli")).unwrap();
+    fs::write(dir.join(".agentcli/config.toml"), "").unwrap();
+    symlink(dir.join(".agentcli"), dir.join("cfg_link")).unwrap();
+    let sb = Sandbox::new(&dir).unwrap();
+
+    for bad in [
+        ".git",
+        ".git/config",
+        ".agentcli",
+        ".agentcli/config.toml",
+        ".agentcli/new/file.toml",
+        "./.agentcli/config.toml",
+        ".AGENTCLI/config.toml",
+        ".Git/HEAD",
+        "cfg_link/config.toml", // a symlink into a protected folder
+    ] {
+        let err = sb.resolve_for_write(bad).expect_err(bad).to_string();
+        assert!(err.contains("protected folder"), "{bad}: {err}");
+    }
+
+    // Reading is still allowed, so the agent can look at its config.
+    assert!(sb.resolve(".agentcli/config.toml").is_ok());
+    assert!(sb.resolve(".git/config").is_ok());
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn write_allows_lookalike_names() {
+    let dir = temp_dir("lookalike");
+    let sb = Sandbox::new(&dir).unwrap();
+    for ok in ["calc.py", ".gitignore", ".github/workflows/ci.yml", ".agentcli.bak", "src/.git/x", ""] {
+        assert!(sb.resolve_for_write(ok).is_ok(), "write refused to {ok:?}");
+    }
+    // Paths outside are still refused with the usual message.
+    assert!(sb.resolve_for_write("../x").is_err_and(|e| e.to_string().contains("outside the repo")));
+    let _ = fs::remove_dir_all(&dir);
+}
