@@ -3,8 +3,9 @@
 use std::fs;
 
 use serde::Deserialize;
+use serde_json::json;
 
-use super::{Sandbox, ToolError, ToolResult};
+use super::{Sandbox, ToolError, ToolResult, ToolSpec};
 
 /// Above this many line comparisons the diff counts are approximated
 /// (every differing middle line counted as removed + added) to stay fast.
@@ -14,6 +15,31 @@ pub const MAX_DIFF_CELLS: usize = 4_000_000;
 pub struct WriteFileArgs {
     pub path: String,
     pub content: String,
+}
+
+/// How the model sees this tool; keep in sync with `WriteFileArgs`.
+pub fn spec() -> ToolSpec {
+    ToolSpec {
+        name: "write_file",
+        description: "Create a file, or overwrite it with entirely new content (parent folders \
+                      are created). For small changes to an existing file prefer edit_file."
+            .to_string(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "File path relative to the repo root."
+                },
+                "content": {
+                    "type": "string",
+                    "description": "The full new content of the file."
+                }
+            },
+            "required": ["path", "content"],
+            "additionalProperties": false
+        }),
+    }
 }
 
 /// Creates or overwrites `path` (creating parent folders). Returns a diff summary:

@@ -1,3 +1,5 @@
+#[path = "../crates/agent/agent.rs"]
+mod agent;
 #[path = "../crates/cli/cli.rs"]
 mod cli;
 #[path = "../crates/provider/OpenAIProvider.rs"]

@@ -8,9 +8,10 @@ use ignore::WalkBuilder;
 use ignore::overrides::OverrideBuilder;
 use regex::Regex;
 use serde::Deserialize;
+use serde_json::json;
 
 use super::list_dir::SKIP;
-use super::{Sandbox, ToolError, ToolResult};
+use super::{Sandbox, ToolError, ToolResult, ToolSpec};
 
 pub const MAX_MATCHES: usize = 200;
 /// Matched lines longer than this (in chars) are cut, so one minified file
@@ -27,6 +28,36 @@ pub struct SearchArgs {
     pub path: Option<String>,
     /// Restrict to files matching this glob, e.g. `*.rs`.
     pub glob: Option<String>,
+}
+
+/// How the model sees this tool; keep in sync with `SearchArgs`.
+pub fn spec() -> ToolSpec {
+    ToolSpec {
+        name: "search",
+        description: format!(
+            "Search file contents with a regular expression (Rust regex syntax), \
+             respecting .gitignore. Returns 'file:line: text' lines, at most {MAX_MATCHES} matches."
+        ),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "pattern": {
+                    "type": "string",
+                    "description": "Regular expression to search for."
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Directory or file to search, relative to the repo root (default: the root)."
+                },
+                "glob": {
+                    "type": "string",
+                    "description": "Only search files matching this glob, e.g. \"*.rs\"."
+                }
+            },
+            "required": ["pattern"],
+            "additionalProperties": false
+        }),
+    }
 }
 
 /// Regex search across files, respecting `.gitignore`. Returns `file:line: text`

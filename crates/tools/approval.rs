@@ -3,8 +3,17 @@
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
 
+/// What the model reads when the user says no. "Any other command that does
+/// the same thing" is there because "don't repeat it" alone let the model
+/// retry a declined `python -m pytest -q` as `pytest -q`. "For the rest of this
+/// task, even after you change code" is there because the model otherwise
+/// reran the same declined test command once it had edited the code.
+pub const DECLINED: &str = "The user declined this command. Do not run it again for the rest of this \
+     task, even after you change code, and do not run any other command that does the same thing. \
+     Continue without it, and say in your final reply what you could not verify.";
+
 /// Decides whether a shell command may run. `Err` carries the reason it may not,
-/// which is passed back to the model.
+/// which is passed back to the model as-is (after `ERROR: `).
 pub trait Approver {
     fn approve(&self, command: &str) -> Result<(), String>;
 }
@@ -29,7 +38,7 @@ impl Approver for TerminalApprover {
             .read(true)
             .write(true)
             .open("/dev/tty")
-            .map_err(|e| format!("no terminal to ask the user for approval ({e})"))?;
+            .map_err(|e| format!("command not run: no terminal to ask the user for approval ({e})"))?;
         let ask = |tty: &mut std::fs::File| -> std::io::Result<String> {
             write!(tty, "\nThe agent wants to run:\n\n{}\n\nRun it? [y/N] ", display_command(command))?;
             tty.flush()?;
@@ -37,10 +46,10 @@ impl Approver for TerminalApprover {
             BufReader::new(tty).read_line(&mut answer)?;
             Ok(answer)
         };
-        let answer = ask(&mut tty).map_err(|e| format!("could not ask for approval ({e})"))?;
+        let answer = ask(&mut tty).map_err(|e| format!("command not run: could not ask for approval ({e})"))?;
         match answer.trim().to_ascii_lowercase().as_str() {
             "y" | "yes" => Ok(()),
-            _ => Err("the user denied it".into()),
+            _ => Err(DECLINED.into()),
         }
     }
 }

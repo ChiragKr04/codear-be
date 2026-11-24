@@ -3,8 +3,9 @@
 //! Tools the model can call. Each tool lives in its own file with its args
 //! struct, limits and logic; this file only registers them and dispatches.
 //!
-//! Adding a tool: create `<name>.rs`, add `pub mod <name>;` + `pub use <name>::<name>;` below,
-//! then add it to `TOOL_NAMES`, `sample_args` and `dispatch`.
+//! Adding a tool: create `<name>.rs` with its args struct and a `spec()`, add
+//! `pub mod <name>;` + `pub use <name>::<name>;` below, then add it to
+//! `TOOL_NAMES`, `specs`, `sample_args` and `dispatch`.
 
 mod error;
 
@@ -32,6 +33,28 @@ use serde::Deserialize;
 /// Names of every tool `dispatch` accepts.
 pub const TOOL_NAMES: &[&str] =
     &["list_dir", "read_file", "search", "write_file", "edit_file", "run_command"];
+
+/// What the model is told about a tool: its name, what it does, and a JSON
+/// Schema for its arguments (which must match the tool's args struct).
+/// Provider-agnostic; the provider turns it into its own wire format.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolSpec {
+    pub name: &'static str,
+    pub description: String,
+    pub parameters: serde_json::Value,
+}
+
+/// Specs for every tool, in `TOOL_NAMES` order.
+pub fn specs() -> Vec<ToolSpec> {
+    vec![
+        list_dir::spec(),
+        read_file::spec(),
+        search::spec(),
+        write_file::spec(),
+        edit_file::spec(),
+        run_command::spec(),
+    ]
+}
 
 /// Example JSON arguments for each tool, used when none are given (e.g. from the CLI).
 pub fn sample_args(name: &str) -> Option<&'static str> {
@@ -61,9 +84,24 @@ pub fn dispatch(sb: &Sandbox, approver: &dyn Approver, name: &str, args: &str) -
     }
 }
 
+/// Entry point for the agent loop: runs one tool call from the model and always
+/// returns text for the `tool` result message. Failures (unknown tool, bad JSON,
+/// I/O errors, a refused command) come back as `ERROR: <reason>` so the model
+/// can see what went wrong and try again, instead of the loop aborting.
+pub fn run(sb: &Sandbox, approver: &dyn Approver, name: &str, args: &str) -> String {
+    match dispatch(sb, approver, name, args) {
+        Ok(output) => output,
+        Err(e) => format!("ERROR: {e}"),
+    }
+}
+
 fn parse<'a, T: Deserialize<'a>>(args: &'a str) -> Result<T, ToolError> {
     serde_json::from_str(args).map_err(|e| ToolError::InvalidArgs(e.to_string()))
 }
+
+#[cfg(test)]
+#[path = "tests/spec_tests.rs"]
+mod spec_tests;
 
 #[cfg(test)]
 #[path = "tests/approval_tests.rs"]

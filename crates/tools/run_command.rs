@@ -8,8 +8,9 @@ use std::thread;
 use std::time::Duration;
 
 use serde::Deserialize;
+use serde_json::json;
 
-use super::{Approver, Sandbox, ToolError, ToolResult};
+use super::{Approver, Sandbox, ToolError, ToolResult, ToolSpec};
 
 pub const DEFAULT_TIMEOUT_SECS: u64 = 60;
 pub const MAX_TIMEOUT_SECS: u64 = 300;
@@ -37,12 +38,43 @@ pub struct RunCommandArgs {
     pub timeout_secs: Option<u64>,
 }
 
+/// How the model sees this tool; keep in sync with `RunCommandArgs`.
+pub fn spec() -> ToolSpec {
+    ToolSpec {
+        name: "run_command",
+        description: format!(
+            "Run a shell command (sh -c) in the repo root, with no stdin. The user must approve \
+             it first. Returns the exit code plus the last {} KB of stdout and stderr.",
+            MAX_OUTPUT_BYTES / 1024
+        ),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "The shell command to run."
+                },
+                "timeout_secs": {
+                    "type": "integer",
+                    "description": format!(
+                        "Kill the command after this many seconds \
+                         (default {DEFAULT_TIMEOUT_SECS}, max {MAX_TIMEOUT_SECS})."
+                    )
+                }
+            },
+            "required": ["command"],
+            "additionalProperties": false
+        }),
+    }
+}
+
 /// Runs `sh -c <command>` in the sandbox root with no stdin. Returns the exit code,
 /// stdout and stderr, keeping the last `MAX_OUTPUT_BYTES` of each.
 ///
 /// Nothing runs until `approver` says yes; a refusal is returned as an error
-/// naming the reason. The command sees only the `ALLOWED_ENV` variables, so
-/// secrets in this process's environment (e.g. `OPENAI_API_KEY`) can't leak.
+/// carrying the approver's reason unchanged. The command sees only the
+/// `ALLOWED_ENV` variables, so secrets in this process's environment (e.g.
+/// `OPENAI_API_KEY`) can't leak.
 ///
 /// The command runs in its own process group. On timeout the whole group is
 /// killed; once `sh` exits, anything it left running in the background is
@@ -70,7 +102,7 @@ pub fn run_command(sb: &Sandbox, approver: &dyn Approver, args: RunCommandArgs) 
 
     approver
         .approve(&args.command)
-        .map_err(|reason| ToolError::Failed(format!("command not run: {reason}")))?;
+        .map_err(ToolError::Failed)?;
 
     let mut child = Command::new("sh")
         .arg("-c")

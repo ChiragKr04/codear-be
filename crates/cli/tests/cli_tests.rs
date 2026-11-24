@@ -7,9 +7,33 @@ fn s(v: &[&str]) -> Vec<String> {
 #[test]
 fn agent_args_join_prompt_words() {
     let args = s(&[".", "Hello", "there"]);
-    let (dir, prompt) = parse_agent_args(&args).unwrap();
+    let (dir, prompt, max_turns) = parse_agent_args(&args).unwrap();
     assert_eq!(dir, Path::new("."));
     assert_eq!(prompt, "Hello there");
+    assert_eq!(max_turns, agent::DEFAULT_MAX_TURNS);
+}
+
+#[test]
+fn agent_args_accept_max_turns_anywhere() {
+    for args in [
+        s(&["--max-turns", "2", ".", "Hello", "there"]),
+        s(&["--max-turns=2", ".", "Hello", "there"]),
+        s(&[".", "Hello", "--max-turns", "2", "there"]),
+    ] {
+        let (dir, prompt, max_turns) = parse_agent_args(&args).unwrap();
+        assert_eq!(dir, Path::new("."));
+        assert_eq!(prompt, "Hello there");
+        assert_eq!(max_turns, 2);
+    }
+}
+
+#[test]
+fn agent_args_reject_bad_max_turns() {
+    assert!(parse_agent_args(&s(&[".", "hi", "--max-turns"])).unwrap_err().contains("needs a <n>"));
+    for bad in ["0", "-1", "two"] {
+        let err = parse_agent_args(&s(&["--max-turns", bad, ".", "hi"])).unwrap_err();
+        assert!(err.contains("positive integer"), "{bad}: {err}");
+    }
 }
 
 #[test]

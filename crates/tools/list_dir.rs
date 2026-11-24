@@ -4,8 +4,9 @@ use std::fs;
 use std::path::Path;
 
 use serde::Deserialize;
+use serde_json::json;
 
-use super::{Sandbox, ToolError, ToolResult};
+use super::{Sandbox, ToolError, ToolResult, ToolSpec};
 
 pub const DEFAULT_DEPTH: usize = 2;
 pub const MAX_ENTRIES: usize = usize::MAX;
@@ -17,6 +18,33 @@ pub struct ListDirArgs {
     pub path: String,
     /// Defaults to `DEFAULT_DEPTH`.
     pub depth: Option<usize>,
+}
+
+/// How the model sees this tool; keep in sync with `ListDirArgs`.
+pub fn spec() -> ToolSpec {
+    ToolSpec {
+        name: "list_dir",
+        description: format!(
+            "List a directory as an indented tree. Directories end in '/'. \
+             Always skips {}.",
+            SKIP.join(", ")
+        ),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Directory relative to the repo root, e.g. \".\" or \"src\"."
+                },
+                "depth": {
+                    "type": "integer",
+                    "description": format!("How many levels deep to list (default {DEFAULT_DEPTH}).")
+                }
+            },
+            "required": ["path"],
+            "additionalProperties": false
+        }),
+    }
 }
 
 /// Tree listing of `path` (relative to the sandbox root) down to

@@ -4,8 +4,9 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 
 use serde::Deserialize;
+use serde_json::json;
 
-use super::{Sandbox, ToolError, ToolResult};
+use super::{Sandbox, ToolError, ToolResult, ToolSpec};
 
 pub const MAX_LINES: usize = 2_000;
 pub const MAX_BYTES: usize = 100 * 1024;
@@ -17,6 +18,37 @@ pub struct ReadFileArgs {
     pub start_line: Option<usize>,
     /// 1-based, inclusive.
     pub end_line: Option<usize>,
+}
+
+/// How the model sees this tool; keep in sync with `ReadFileArgs`.
+pub fn spec() -> ToolSpec {
+    ToolSpec {
+        name: "read_file",
+        description: format!(
+            "Read a text file, returned as numbered lines. Returns at most {MAX_LINES} lines \
+             or {} KB per call; use start_line/end_line to read large files in parts.",
+            MAX_BYTES / 1024
+        ),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "File path relative to the repo root."
+                },
+                "start_line": {
+                    "type": "integer",
+                    "description": "First line to return, 1-based, inclusive."
+                },
+                "end_line": {
+                    "type": "integer",
+                    "description": "Last line to return, 1-based, inclusive."
+                }
+            },
+            "required": ["path"],
+            "additionalProperties": false
+        }),
+    }
 }
 
 /// Returns numbered lines of `path` (inside the sandbox), optionally limited to a line range.

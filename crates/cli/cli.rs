@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use crate::agent;
 use crate::provider::OpenAIProvider;
 use crate::tools::{self, Sandbox, TerminalApprover};
 
@@ -12,8 +13,8 @@ pub fn run(args: &[String]) -> Result<(), String> {
             Ok(())
         }
         Some("agent") => {
-            let (dir, prompt) = parse_agent_args(&args[1..])?;
-            run_agent(dir, &prompt)
+            let (dir, prompt, max_turns) = parse_agent_args(&args[1..])?;
+            run_agent(dir, &prompt, max_turns)
         }
         Some("tool") => {
             let (repo, name, json) = parse_tool_args(&args[1..])?;
@@ -27,20 +28,46 @@ pub fn run(args: &[String]) -> Result<(), String> {
     }
 }
 
-/// Parse `<dir> <prompt...>` for the `agent` command.
-fn parse_agent_args(args: &[String]) -> Result<(&Path, String), String> {
-    let [dir, rest @ ..] = args else {
+/// Parse `[--max-turns <n>] <dir> <prompt...>` for the `agent` command.
+/// `--max-turns` may appear anywhere after `agent`; without it,
+/// `agent::DEFAULT_MAX_TURNS` is used.
+fn parse_agent_args(args: &[String]) -> Result<(&Path, String, usize), String> {
+    let mut max_turns = agent::DEFAULT_MAX_TURNS;
+    let mut rest = Vec::new();
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        if arg == "--max-turns" {
+            let Some(n) = iter.next() else {
+                return Err(format!("agent: --max-turns needs a <n>\n\n{}", usage()));
+            };
+            max_turns = parse_max_turns(n)?;
+        } else if let Some(n) = arg.strip_prefix("--max-turns=") {
+            max_turns = parse_max_turns(n)?;
+        } else {
+            rest.push(arg.as_str());
+        }
+    }
+
+    let [dir, rest @ ..] = rest.as_slice() else {
         return Err(format!("agent: missing <dir>\n\n{}", usage()));
     };
     let prompt = rest.join(" ");
     if prompt.trim().is_empty() {
         return Err(format!("agent: missing <prompt>\n\n{}", usage()));
     }
-    let dir = Path::new(dir);
+    let dir = Path::new(*dir);
     if !dir.is_dir() {
         return Err(format!("agent: not a directory: {}", dir.display()));
     }
-    Ok((dir, prompt))
+    Ok((dir, prompt, max_turns))
+}
+
+/// A positive turn count for `--max-turns`.
+fn parse_max_turns(s: &str) -> Result<usize, String> {
+    match s.parse::<usize>() {
+        Ok(n) if n > 0 => Ok(n),
+        _ => Err(format!("agent: --max-turns must be a positive integer, got {s:?}")),
+    }
 }
 
 /// Parse `[--repo <path>] <name> [json-args]` for the `tool` command.
@@ -86,10 +113,14 @@ fn open_sandbox(repo: Option<&Path>) -> Result<Sandbox, String> {
     Sandbox::new(&repo).map_err(|e| format!("tool: --repo {}: {e}", repo.display()))
 }
 
-fn run_agent(_dir: &Path, prompt: &str) -> Result<(), String> {
+
+/// Runs the agent loop on `prompt` inside `dir` and prints its final answer.
+fn run_agent(dir: &Path, prompt: &str, max_turns: usize) -> Result<(), String> {
     let provider = OpenAIProvider::from_env().map_err(|e| e.to_string())?;
-    let reply = provider.complete(prompt).map_err(|e| e.to_string())?;
-    println!("{reply}");
+    let sb = Sandbox::new(dir).map_err(|e| format!("agent: {}: {e}", dir.display()))?;
+    let answer = agent::run_agent(&provider, &sb, &TerminalApprover, prompt, max_turns)
+        .map_err(|e| format!("agent: {e}"))?;
+    println!("{answer}");
     Ok(())
 }
 
@@ -102,7 +133,7 @@ fn capitalize(s: &str) -> String {
 }
 
 fn usage() -> String {
-    "usage: agentcli <command> [args]\n\ncommands:\n  echo <text>            print the text with its first letter capitalized\n  agent <dir> <prompt>   send the prompt to OpenAI and print the reply\n                         (needs OPENAI_API_KEY; optional OPENAI_MODEL, OPENAI_BASE_URL)\n  tool [--repo <path>] <name> [json]\n                         run a tool directly with JSON args (sample args if omitted),\n                         inside <path> (default: current directory);\n                         run_command asks for approval on the terminal first\n                         tools: list_dir, read_file, search, write_file, edit_file, run_command".to_string()
+    "usage: agentcli <command> [args]\n\ncommands:\n  echo <text>            print the text with its first letter capitalized\n  agent [--max-turns <n>] <dir> <prompt>\n                         work on the task inside <dir> with the tools below, looping\n                         until OpenAI gives a final answer, then print it\n                         (gives up after <n> turns; default 30)\n                         (progress goes to stderr; run_command asks for approval)\n                         (needs OPENAI_API_KEY; optional OPENAI_MODEL, OPENAI_BASE_URL)\n  tool [--repo <path>] <name> [json]\n                         run a tool directly with JSON args (sample args if omitted),\n                         inside <path> (default: current directory);\n                         run_command asks for approval on the terminal first\n                         tools: list_dir, read_file, search, write_file, edit_file, run_command".to_string()
 }
 
 #[cfg(test)]

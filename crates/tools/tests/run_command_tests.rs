@@ -1,4 +1,5 @@
 use super::run_command::*;
+use super::approval::DECLINED;
 use super::{Sandbox, ToolError, ToolResult};
 
 use std::time::{Duration, Instant};
@@ -95,13 +96,22 @@ fn denied_command_does_not_run() {
     let asked = std::cell::RefCell::new(Vec::new());
     let deny = |cmd: &str| {
         asked.borrow_mut().push(cmd.to_string());
-        Err("the user denied it".to_string())
+        Err(DECLINED.to_string())
     };
 
     let args = RunCommandArgs { command: "touch ran".into(), timeout_secs: None };
     let err = run_command(&sb, &deny, args).unwrap_err().to_string();
-    assert_eq!(err, "command not run: the user denied it");
+    assert_eq!(err, DECLINED);
     assert_eq!(*asked.borrow(), ["touch ran"]);
+
+    // What the model actually reads.
+    let out = super::run(&sb, &deny, "run_command", r#"{"command": "touch ran"}"#);
+    assert_eq!(
+        out,
+        "ERROR: The user declined this command. Do not run it again for the rest of this \
+         task, even after you change code, and do not run any other command that does the same thing. \
+         Continue without it, and say in your final reply what you could not verify."
+    );
     assert!(!dir.join("ran").exists());
     let _ = std::fs::remove_dir_all(&dir);
 }

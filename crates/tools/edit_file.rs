@@ -3,8 +3,9 @@
 use std::fs;
 
 use serde::Deserialize;
+use serde_json::json;
 
-use super::{Sandbox, ToolError, ToolResult};
+use super::{Sandbox, ToolError, ToolResult, ToolSpec};
 
 /// At most this many match line numbers are listed in the "too many matches" error.
 pub const MAX_LISTED_MATCHES: usize = 10;
@@ -14,6 +15,36 @@ pub struct EditFileArgs {
     pub path: String,
     pub old_str: String,
     pub new_str: String,
+}
+
+/// How the model sees this tool; keep in sync with `EditFileArgs`.
+pub fn spec() -> ToolSpec {
+    ToolSpec {
+        name: "edit_file",
+        description: "Replace one exact occurrence of old_str with new_str in a file. old_str \
+                      must match exactly once (whitespace included); include enough surrounding \
+                      lines to make it unique. Fails if it matches 0 or several times."
+            .to_string(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "File path relative to the repo root."
+                },
+                "old_str": {
+                    "type": "string",
+                    "description": "Exact text to replace; must occur exactly once in the file."
+                },
+                "new_str": {
+                    "type": "string",
+                    "description": "Text to put in its place."
+                }
+            },
+            "required": ["path", "old_str", "new_str"],
+            "additionalProperties": false
+        }),
+    }
 }
 
 /// Replaces the single exact match of `old_str` with `new_str`. Errors if

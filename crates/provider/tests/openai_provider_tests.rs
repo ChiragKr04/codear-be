@@ -70,8 +70,8 @@ fn roles_serialize_lowercase() {
         ChatMessage::system("s"),
         ChatMessage::user("u"),
         ChatMessage::assistant("a"),
-        ChatMessage { role: Role::Developer, content: "d".into() },
-        ChatMessage { role: Role::Tool, content: "t".into() },
+        ChatMessage::new(Role::Developer, "d"),
+        ChatMessage::tool_result("call_1", "t"),
     ];
     let roles: Vec<String> = msgs
         .iter()
@@ -154,6 +154,191 @@ fn error_body_deserializes() {
     assert_eq!(err.error.kind.as_deref(), Some("invalid_request_error"));
     assert_eq!(err.error.param, None);
     assert_eq!(err.error.code.as_deref(), Some("invalid_api_key"));
+}
+
+// ----- tool calling: what goes in -----
+
+fn read_file_tool() -> ToolDefinition {
+    ToolDefinition::function(
+        "read_file",
+        "Read a file",
+        json!({
+            "type": "object",
+            "properties": { "path": { "type": "string" } },
+            "required": ["path"],
+            "additionalProperties": false
+        }),
+    )
+}
+
+fn call(id: &str, name: &str, arguments: &str) -> ToolCall {
+    ToolCall {
+        id: id.into(),
+        kind: ToolKind::Function,
+        function: FunctionCall { name: name.into(), arguments: arguments.into() },
+    }
+}
+
+#[test]
+fn request_without_tools_omits_tools_field() {
+    let req = ChatCompletionRequest::new("m", vec![ChatMessage::user("hi")]);
+    assert!(serde_json::to_value(&req).unwrap().get("tools").is_none());
+}
+
+#[test]
+fn request_serializes_tools_in_openai_format() {
+    let mut req = ChatCompletionRequest::new("m", vec![ChatMessage::user("hi")]);
+    req.tools = vec![read_file_tool()];
+    let value = serde_json::to_value(&req).unwrap();
+    assert_eq!(
+        value["tools"],
+        json!([{
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "description": "Read a file",
+                "parameters": {
+                    "type": "object",
+                    "properties": { "path": { "type": "string" } },
+                    "required": ["path"],
+                    "additionalProperties": false
+                }
+            }
+        }])
+    );
+}
+
+#[test]
+fn plain_messages_omit_tool_fields() {
+    let value = serde_json::to_value(ChatMessage::user("hi")).unwrap();
+    assert_eq!(value, json!({ "role": "user", "content": "hi" }));
+}
+
+#[test]
+fn assistant_tool_call_message_serializes_with_null_content() {
+    let msg = ChatMessage::assistant_tool_calls(None, vec![call("call_1", "read_file", r#"{"path":"a.rs"}"#)]);
+    assert_eq!(
+        serde_json::to_value(&msg).unwrap(),
+        json!({
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": { "name": "read_file", "arguments": "{\"path\":\"a.rs\"}" }
+            }]
+        })
+    );
+}
+
+#[test]
+fn tool_result_message_serializes_with_call_id() {
+    let msg = ChatMessage::tool_result("call_1", "fn main() {}");
+    assert_eq!(
+        serde_json::to_value(&msg).unwrap(),
+        json!({ "role": "tool", "content": "fn main() {}", "tool_call_id": "call_1" })
+    );
+}
+
+#[test]
+fn request_with_tool_history_round_trips() {
+    let mut req = ChatCompletionRequest::new(
+        "m",
+        vec![
+            ChatMessage::user("read a.rs"),
+            ChatMessage::assistant_tool_calls(Some("Reading.".into()), vec![call("c1", "read_file", "{}")]),
+            ChatMessage::tool_result("c1", "contents"),
+        ],
+    );
+    req.tools = vec![read_file_tool()];
+    let back: ChatCompletionRequest = serde_json::from_str(&serde_json::to_string(&req).unwrap()).unwrap();
+    assert_eq!(back, req);
+}
+
+// ----- tool calling: what comes out -----
+
+const TOOL_CALL_BODY: &str = r#"{
+    "id": "chatcmpl-tool",
+    "object": "chat.completion",
+    "created": 1741569952,
+    "model": "gpt-4o-mini",
+    "choices": [{
+        "index": 0,
+        "message": {
+            "role": "assistant",
+            "content": null,
+            "refusal": null,
+            "tool_calls": [
+                {
+                    "id": "call_abc",
+                    "type": "function",
+                    "function": { "name": "read_file", "arguments": "{\"path\":\"src/main.rs\"}" }
+                },
+                {
+                    "id": "call_def",
+                    "type": "function",
+                    "function": { "name": "list_dir", "arguments": "{\"path\":\".\"}" }
+                }
+            ]
+        },
+        "finish_reason": "tool_calls"
+    }],
+    "usage": { "prompt_tokens": 50, "completion_tokens": 20, "total_tokens": 70 }
+}"#;
+
+#[test]
+fn response_with_tool_calls_becomes_reply() {
+    let reply = parse_response(200, TOOL_CALL_BODY).unwrap().into_reply().unwrap();
+    assert_eq!(reply.content, None);
+    assert_eq!(reply.finish_reason.as_deref(), Some("tool_calls"));
+    assert_eq!(
+        reply.tool_calls,
+        vec![
+            call("call_abc", "read_file", r#"{"path":"src/main.rs"}"#),
+            call("call_def", "list_dir", r#"{"path":"."}"#),
+        ]
+    );
+    assert_eq!(reply.usage.map(|u| u.total_tokens), Some(70));
+}
+
+#[test]
+fn reply_to_message_echoes_the_tool_calls() {
+    let reply = parse_response(200, TOOL_CALL_BODY).unwrap().into_reply().unwrap();
+    let msg = reply.to_message();
+    assert_eq!(msg.role, Role::Assistant);
+    assert_eq!(msg.content, None);
+    assert_eq!(msg.tool_calls, reply.tool_calls);
+    assert_eq!(msg.tool_call_id, None);
+}
+
+#[test]
+fn text_response_becomes_reply_without_tool_calls() {
+    let reply = parse_response(200, SUCCESS_BODY).unwrap().into_reply().unwrap();
+    assert_eq!(reply.content.as_deref(), Some("Hello! How can I help you today?"));
+    assert!(reply.tool_calls.is_empty());
+    assert_eq!(reply.finish_reason.as_deref(), Some("stop"));
+}
+
+#[test]
+fn null_tool_calls_and_missing_type_are_accepted() {
+    // Some OpenAI-compatible servers send `tool_calls: null`, or omit a call's `type`.
+    let null_calls = json!({
+        "id": "x", "object": "chat.completion", "created": 1, "model": "m",
+        "choices": [{ "index": 0, "message": { "role": "assistant", "content": "hi", "tool_calls": null } }]
+    });
+    let reply = serde_json::from_value::<ChatCompletionResponse>(null_calls).unwrap().into_reply().unwrap();
+    assert!(reply.tool_calls.is_empty());
+
+    let no_type = json!({ "id": "c", "function": { "name": "search", "arguments": "{}" } });
+    let tc: ToolCall = serde_json::from_value(no_type).unwrap();
+    assert_eq!(tc.kind, ToolKind::Function);
+}
+
+#[test]
+fn reply_from_no_choices_is_empty_response() {
+    let body = r#"{"id":"x","object":"chat.completion","created":1,"model":"m","choices":[]}"#;
+    let resp: ChatCompletionResponse = serde_json::from_str(body).unwrap();
+    assert!(matches!(resp.into_reply(), Err(ProviderError::EmptyResponse)));
 }
 
 // ----- status/body -> result mapping -----
